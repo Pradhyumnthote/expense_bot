@@ -23,7 +23,7 @@ DB_CONFIG = {
     "password": "Jay@14111",
     "database": "telegrambot",
 }
-PUBLIC_BASE_URL = "https://25abe8e1a458.ngrok-free.app"
+PUBLIC_BASE_URL = "https://81113dea1ef3.ngrok-free.app"
 
 # === LOGGING ===
 logging.basicConfig(level=logging.INFO)
@@ -291,29 +291,69 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor(dictionary=True)
 
         if not args:
+            # No arguments: today's expenses
             today_str = now.strftime("%Y-%m-%d")
             cursor.execute(
                 "SELECT * FROM expenses WHERE username = %s AND DATE(date) = %s",
                 (username, today_str),
             )
+
         elif len(args) == 1:
-            if args[0].lower() == "month":
+            arg = args[0].lower()
+            if arg == "month":
                 month_str = now.strftime("%Y-%m")
                 cursor.execute(
                     "SELECT * FROM expenses WHERE username = %s AND DATE_FORMAT(date,'%%Y-%%m') = %s",
                     (username, month_str),
                 )
-            elif args[0].lower() == "year":
+            elif arg == "year":
                 year_str = now.strftime("%Y")
                 cursor.execute(
                     "SELECT * FROM expenses WHERE username = %s AND YEAR(date) = %s",
                     (username, year_str),
                 )
+            elif arg.isdigit():
+                if len(arg) == 1 or len(arg) == 2:  # treat as month number for current year
+                    month_num = int(arg)
+                    if 1 <= month_num <= 12:
+                        month_str = f"{now.year}-{month_num:02d}"
+                        cursor.execute(
+                            "SELECT * FROM expenses WHERE username = %s AND DATE_FORMAT(date,'%%Y-%%m') = %s",
+                            (username, month_str),
+                        )
+                    else:
+                        await update.message.reply_text("❌ Invalid month number. Use 1-12.")
+                        cursor.close()
+                        conn.close()
+                        return
+
+                elif len(arg) == 4:  # treat as year
+                    year_num = int(arg)
+                    if 1900 <= year_num <= now.year:  # reasonable year check
+                        cursor.execute(
+                            "SELECT * FROM expenses WHERE username = %s AND YEAR(date) = %s",
+                            (username, year_num),
+                        )
+                    else:
+                        await update.message.reply_text("❌ Invalid year.")
+                        cursor.close()
+                        conn.close()
+                        return
+                else:
+                    await update.message.reply_text(
+                        "❌ Invalid argument. Use /summary, /summary month, /summary year, or /summary <start> <end>"
+                    )
+                    cursor.close()
+                    conn.close()
+                    return
             else:
                 await update.message.reply_text(
                     "❌ Invalid argument. Use /summary, /summary month, /summary year, or /summary <start> <end>"
                 )
+                cursor.close()
+                conn.close()
                 return
+
         elif len(args) == 2:
             start_date = parse_date(args[0])
             end_date = parse_date(args[1])
@@ -321,6 +361,8 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     "❌ Could not parse the dates. Use format: YYYY-MM-DD"
                 )
+                cursor.close()
+                conn.close()
                 return
             cursor.execute(
                 "SELECT * FROM expenses WHERE username = %s AND date BETWEEN %s AND %s",
@@ -328,6 +370,8 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text("❌ Too many arguments")
+            cursor.close()
+            conn.close()
             return
 
         expenses = cursor.fetchall()
@@ -343,9 +387,11 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for e in expenses:
             msg += f"{e['id']}: {e['category']} ₹{e['amount']} ({e['description']}) on {e['date']}\n"
         await update.message.reply_text(msg)
+
     except Exception as e:
         logger.error(e)
         await update.message.reply_text("❌ Error fetching summary.")
+
 
 
 async def view(update: Update, context: ContextTypes.DEFAULT_TYPE):
